@@ -2,7 +2,7 @@ use std::fs;
 use std::fs::File;
 use std::fmt::Write;
 
-//FIXME: install tabnine in idea
+
 fn main() {
     let path = "/home/Dspivey/Programming/rust_projects/c_compiler/return_2.c";
     let infile = fs::read_to_string(path).expect("Unable to read file");
@@ -22,6 +22,7 @@ enum Token {
     Identifier(String),
     IntegerLiteral(u64),
     Invalid(String),
+    Empty,
 }
 
 #[derive(Debug, PartialEq)]
@@ -49,6 +50,7 @@ enum ExpressionType {
 }
 
 impl Program {
+    //This may not be the best way to do this
     fn parse_function_declaration(mut tokens: Vec<Token>, mut ast: Vec<Program>) -> (Vec<Token>, Vec<Program>) {
         let mut function_identifier = String::new();
         if let Token::Identifier(identifier) = &tokens[1] {
@@ -81,6 +83,7 @@ impl Program {
         }
         tokens.remove(tokens.len() - 1);
 
+        println!("\n<tokens after function parse>");
         for token in tokens.iter() {
             println!("{:?}", token);
         }
@@ -90,16 +93,33 @@ impl Program {
     }
 
     fn parse_statement(mut tokens: Vec<Token>, mut ast: Vec<Program>) -> Vec<Program> {
-        let statement: Vec<Token> = vec![
-            Token::Keyword(KeywordType::Return),
-            //1 is arbitrary.  data is not compared
-            Token::IntegerLiteral(1),
-            Token::Semicolon,
-        ];
-        for (i, token) in tokens.iter().enumerate() {
-            assert_eq!(std::mem::discriminant(&statement[i]), std::mem::discriminant(token), "oh cwap");
+        let mut last_token = &Token::Empty;
+        for token in tokens.iter() {
+            match token {
+                Token::Keyword(KeywordType::Return) => {
+                    match last_token {
+                        Token::Empty => last_token = token,
+                        _ => panic!("Return must come first in a statement"),
+                    }
+                }
+                Token::IntegerLiteral(_) => {
+                    match last_token {
+                        Token::Keyword(KeywordType::Return) => last_token = token,
+                        _ => panic!("Improper order of integer literal"),
+                    }
+                }
+                //FIXME: PROGRAM STILL COMPILES WITHOUT A SEMICOLON
+                Token::Semicolon => {
+                    match last_token {
+                        Token::IntegerLiteral(_) => (),
+                        _ => panic!("Semicolon must come last in a statement"),
+                    }
+                }
+                _ => panic!("Invalid token"),
+            }
         }
 
+        //FIXME: Not expandable.  Need conditions to determine what is pushed to the AST
         if let Token::IntegerLiteral(integer_literal) = tokens[1] {
             ast.push(Program::Statement(StatementType::Return));
             ast.push(Program::Expression(ExpressionType::Constant(integer_literal)));
@@ -110,11 +130,13 @@ impl Program {
 }
 
 fn lex(infile: &String) -> Vec<Token> {
+    let mut words: Vec<String> = Vec::new();
+    let mut letters: Vec<String> = Vec::new();
     let mut tokens: Vec<Token> = Vec::new();
     let mut infile_tmp = String::from(infile);
 
-    //Parses the string into individual tokens, assigning each a Token data type
     while infile_tmp.len() > 0 {
+        //Separates file into "words" by whitespace and control chars
         let mut severed = 0;
         let mut word: String = String::new();
         for char in infile_tmp.chars() {
@@ -124,73 +146,89 @@ fn lex(infile: &String) -> Vec<Token> {
             }
             word.push(char);
         }
+        words.push(word);
         while severed > 0 {
             infile_tmp.remove(0);
             severed -= 1;
         }
-        if &word != &String::from("") {
-            match word.as_str() {
+    }
+
+    //Letters are words separated into important parts, such as names and parentheses
+    for word in words.iter() {
+        let mut letter = String::new();
+        for char in word.chars() {
+            match char {
+                '(' => {
+                    letters.push(letter.to_owned());
+                    letters.push(char.to_string());
+                    letter = String::new();
+                    continue;
+                }
+                ')' => {
+                    letters.push(letter.to_owned());
+                    letters.push(char.to_string());
+                    letter = String::new();
+                    continue;
+                }
+                '{' => {
+                    letters.push(letter.to_owned());
+                    letters.push(char.to_string());
+                    letter = String::new();
+                    continue;
+                }
+                '}' => {
+                    letters.push(letter.to_owned());
+                    letters.push(char.to_string());
+                    letter = String::new();
+                    continue;
+                }
+                char if char.is_ascii_digit() => {
+                    letters.push(letter.to_owned());
+                    letters.push(char.to_string());
+                    letter = String::new();
+                    continue;
+                }
+                ';' => {
+                    letters.push(letter.to_owned());
+                    letters.push(char.to_string());
+                    letter = String::new();
+                    continue;
+                }
+                _ => letter.push(char),
+            }
+        }
+        letters.push(letter);
+    }
+
+    //Parses the string into individual tokens, assigning each a Token data type
+    for letter in letters.iter() {
+        if letter != &String::from("") {
+            match letter.as_str() {
                 "int" => tokens.push(Token::Keyword(KeywordType::Int)),
-                "main()" =>
-                    {
-                        //FIXME: parentheses crap.  doodoo solution works now but will not be viable later
-                        let mut open_parenthesis = false;
-                        let mut close_parenthesis = false;
-                        let mut counter = 0;
-                        for char in word.chars() {
-                            if char == '(' {
-                                word.remove(counter);
-                                open_parenthesis = true;
-                                break;
-                            } else {
-                                counter += 1;
-                            }
-                        }
-
-                        let mut counter_1 = 0;
-                        for char in word.chars() {
-                            if char == ')' {
-                                word.remove(counter_1);
-                                close_parenthesis = true;
-                                break;
-                            } else {
-                                counter_1 += 1;
-                            }
-                        }
-
-                        tokens.push(Token::Identifier(word));
-                        //Determines the order of the parentheses
-                        //FIXME: parentheses screw all up when out of order or if there is whitespace between main and parentheses
-                        if counter <= counter_1 {
-                            tokens.push(Token::OpenParenthesis);
-                            tokens.push(Token::CloseParenthesis);
-                        } else {
-                            tokens.push(Token::CloseParenthesis);
-                            tokens.push(Token::OpenParenthesis);
-                        }
-                    }
+                "main" => tokens.push(Token::Identifier(letter.to_owned())),
+                "(" => tokens.push(Token::OpenParenthesis),
+                ")" => tokens.push(Token::CloseParenthesis),
                 "{" => tokens.push(Token::OpenBrace),
                 "}" => tokens.push(Token::CloseBrace),
                 "return" => tokens.push(Token::Keyword(KeywordType::Return)),
-                word if word.as_bytes()[0].is_ascii_digit() => {
-                    //FIXME: only works for single-digit integers (could use a for-if instead)
-                    tokens.push(Token::IntegerLiteral(word.as_bytes()[0] as u64 - '0' as u64));
-                    tokens.push(Token::Semicolon);
-                }
-                _ => tokens.push(Token::Invalid(word)),
+                //FIXME: only works for single-digit integers (could use a for-if instead)
+                letter if letter.as_bytes()[0].is_ascii_digit() => tokens.push(Token::IntegerLiteral(letter.as_bytes()[0] as u64 - '0' as u64)),
+                ";" => tokens.push(Token::Semicolon),
+                _ => tokens.push(Token::Invalid(letter.to_owned())),
             }
         }
     }
+    println!("<tokens>");
+    for token in tokens.iter() {
+        println!("{:?}", token);
+    }
+
     tokens
 }
 
+//FIXME: this function is doodoo cheeks
 fn parse(infile: &String) -> Vec<Program> {
     let mut ast: Vec<Program> = Vec::new();
-
-    for token in lex(&infile) {
-        println!("{:?}", token);
-    }
-    println!("\n");
 
     let fun_decl = Program::parse_function_declaration(lex(&infile), ast);
     let tokens = fun_decl.0;
@@ -199,7 +237,7 @@ fn parse(infile: &String) -> Vec<Program> {
     let statement = Program::parse_statement(tokens, ast);
     let ast = statement;
 
-    println!("\n");
+    println!("\n<ast>");
     for node in &ast {
         println!("{:?}", node);
     }
@@ -209,27 +247,29 @@ fn parse(infile: &String) -> Vec<Program> {
 
 //assembly for return_2.c
 /*
-	.globl	main
+    .globl	main
 main:
-	movl	$2, %eax
-	ret
+    movl	$2, %eax
+    ret
 */
 
 fn generate_assembly(ast: Vec<Program>) {
     let mut file_string = String::new();
     let mut value: u64 = 0;
 
+    //FIXME: find a better way to do this
     if let Program::Expression(ExpressionType::Constant(num)) = &ast[2] {
         value = *num;
     };
     for node in &ast {
-        match (node) {
+        match node {
             Program::FunctionDeclaration(_) => {
                 file_string.push_str("
                     .globl main
                 main:
                 ")
             }
+            //FIXME: if let should maybe go in here instead
             Program::Statement(StatementType::Return) => {
                 write!(file_string, "
                     movl    ${}, %eax
