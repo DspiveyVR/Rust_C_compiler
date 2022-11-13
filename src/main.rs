@@ -1,5 +1,4 @@
 use std::fs;
-use std::fs::File;
 use std::fmt::Write;
 
 
@@ -7,7 +6,7 @@ fn main() {
     let path = "/home/Dspivey/Programming/rust_projects/c_compiler/return_2.c";
     let infile = fs::read_to_string(path).expect("Unable to read file");
 
-    generate_assembly(parse(&infile));
+    generate_assembly(parse(lex(&infile)));
 }
 
 //Lexing enums
@@ -21,6 +20,9 @@ enum Token {
     Semicolon,
     Identifier(String),
     IntegerLiteral(u64),
+    Negation,
+    BitwiseComplement,
+    LogicalNegation,
     Invalid(String),
     Empty,
 }
@@ -56,11 +58,11 @@ impl Program {
         if let Token::Identifier(identifier) = &tokens[1] {
             function_identifier = identifier.to_string();
         }
-        let function_identifier_copy = function_identifier.clone();
+        //let function_identifier_copy = function_identifier.clone();
 
         let left: Vec<Token> = vec![
             Token::Keyword(KeywordType::Int),
-            Token::Identifier(function_identifier),
+            Token::Identifier(function_identifier.to_owned()),
             Token::OpenParenthesis,
             Token::CloseParenthesis,
             Token::OpenBrace,
@@ -88,11 +90,11 @@ impl Program {
             println!("{:?}", token);
         }
 
-        ast.push(Program::FunctionDeclaration(function_identifier_copy));
+        ast.push(Program::FunctionDeclaration(function_identifier));
         (tokens, ast)
     }
 
-    fn parse_statement(mut tokens: Vec<Token>, mut ast: Vec<Program>) -> Vec<Program> {
+    fn parse_statement(tokens: Vec<Token>, mut ast: Vec<Program>) -> Vec<Program> {
         let mut last_token = &Token::Empty;
         for token in tokens.iter() {
             match token {
@@ -104,22 +106,45 @@ impl Program {
                 }
                 Token::IntegerLiteral(_) => {
                     match last_token {
-                        Token::Keyword(KeywordType::Return) => last_token = token,
+                        Token::Keyword(KeywordType::Return) |
+                        Token::Negation |
+                        Token::BitwiseComplement |
+                        Token::LogicalNegation
+                        => last_token = token,
                         _ => panic!("Improper order of integer literal"),
                     }
                 }
-                //FIXME: PROGRAM STILL COMPILES WITHOUT A SEMICOLON
                 Token::Semicolon => {
                     match last_token {
                         Token::IntegerLiteral(_) => (),
                         _ => panic!("Semicolon must come last in a statement"),
                     }
                 }
+                Token::Negation |
+                Token::BitwiseComplement |
+                Token::LogicalNegation
+                => {
+                    match last_token {
+                        //FIXME: could pose a problem if return keyword is entered between operators
+                        Token::Keyword(KeywordType::Return) |
+                        Token::Negation |
+                        Token::BitwiseComplement |
+                        Token::LogicalNegation
+                        => last_token = token,
+                        _ => panic!("Improper order of operator"),
+                    }
+                }
                 _ => panic!("Invalid token"),
             }
         }
 
+        if tokens[tokens.len() - 1] != Token::Semicolon {
+            panic!("you forgot a semicolon LOLLLLLLLLLLL");
+        }
+
         //FIXME: Not expandable.  Need conditions to determine what is pushed to the AST
+        //FIXME: yep yep you gotta support the uh the uh new stuff ohmygod please for the love of God
+        //FIXME: GO TO FREAKING SLEEP
         if let Token::IntegerLiteral(integer_literal) = tokens[1] {
             ast.push(Program::Statement(StatementType::Return));
             ast.push(Program::Expression(ExpressionType::Constant(integer_literal)));
@@ -158,6 +183,7 @@ fn lex(infile: &String) -> Vec<Token> {
         let mut letter = String::new();
         for char in word.chars() {
             match char {
+                //FIXME: change these to or (|) conditions so as not to repeat the same code each time.
                 '(' => {
                     letters.push(letter.to_owned());
                     letters.push(char.to_string());
@@ -182,13 +208,25 @@ fn lex(infile: &String) -> Vec<Token> {
                     letter = String::new();
                     continue;
                 }
-                char if char.is_ascii_digit() => {
+                ';' => {
                     letters.push(letter.to_owned());
                     letters.push(char.to_string());
                     letter = String::new();
                     continue;
                 }
-                ';' => {
+                '-' => {
+                    letters.push(letter.to_owned());
+                    letters.push(char.to_string());
+                    letter = String::new();
+                    continue;
+                }
+                '~' => {
+                    letters.push(letter.to_owned());
+                    letters.push(char.to_string());
+                    letter = String::new();
+                    continue;
+                }
+                '!' => {
                     letters.push(letter.to_owned());
                     letters.push(char.to_string());
                     letter = String::new();
@@ -211,9 +249,28 @@ fn lex(infile: &String) -> Vec<Token> {
                 "{" => tokens.push(Token::OpenBrace),
                 "}" => tokens.push(Token::CloseBrace),
                 "return" => tokens.push(Token::Keyword(KeywordType::Return)),
-                //FIXME: only works for single-digit integers (could use a for-if instead)
-                letter if letter.as_bytes()[0].is_ascii_digit() => tokens.push(Token::IntegerLiteral(letter.as_bytes()[0] as u64 - '0' as u64)),
+                //Logic to account for multiple decimal places
+                letter if letter.as_bytes()[0].is_ascii_digit() => {
+                    let mut int_literal: u64 = 0;
+                    let mut power_of_ten = (letter.to_string().len() - 1) as i32;
+                    let mut is_integer = true;
+                    for char in letter.chars() {
+                        if char.is_ascii_digit() {
+                            int_literal += (char as u64 - '0' as u64) * 10_u64.pow(power_of_ten as u32);
+                            power_of_ten -= 1;
+                        } else {
+                            tokens.push(Token::Invalid("not an integer".to_string()));
+                            is_integer = false;
+                        }
+                    }
+                    if is_integer {
+                        tokens.push(Token::IntegerLiteral(int_literal));
+                    }
+                }
                 ";" => tokens.push(Token::Semicolon),
+                "-" => tokens.push(Token::Negation),
+                "~" => tokens.push(Token::BitwiseComplement),
+                "!" => tokens.push(Token::LogicalNegation),
                 _ => tokens.push(Token::Invalid(letter.to_owned())),
             }
         }
@@ -226,11 +283,10 @@ fn lex(infile: &String) -> Vec<Token> {
     tokens
 }
 
-//FIXME: this function is doodoo cheeks
-fn parse(infile: &String) -> Vec<Program> {
-    let mut ast: Vec<Program> = Vec::new();
+fn parse(lexer: Vec<Token>) -> Vec<Program> {
+    let ast: Vec<Program> = Vec::new();
 
-    let fun_decl = Program::parse_function_declaration(lex(&infile), ast);
+    let fun_decl = Program::parse_function_declaration(lexer, ast);
     let tokens = fun_decl.0;
     let ast = fun_decl.1;
 
@@ -255,13 +311,8 @@ main:
 
 fn generate_assembly(ast: Vec<Program>) {
     let mut file_string = String::new();
-    let mut value: u64 = 0;
 
-    //FIXME: find a better way to do this
-    if let Program::Expression(ExpressionType::Constant(num)) = &ast[2] {
-        value = *num;
-    };
-    for node in &ast {
+    for (i, node) in ast.iter().enumerate() {
         match node {
             Program::FunctionDeclaration(_) => {
                 file_string.push_str("
@@ -269,12 +320,16 @@ fn generate_assembly(ast: Vec<Program>) {
                 main:
                 ")
             }
-            //FIXME: if let should maybe go in here instead
             Program::Statement(StatementType::Return) => {
-                write!(file_string, "
+                match ast[i + 1] {
+                    Program::Expression(ExpressionType::Constant(num)) => {
+                        write!(file_string, "
                     movl    ${}, %eax
                     ret
-                ", value).unwrap();
+                    ", num).unwrap();
+                    }
+                    _ => (),
+                }
             }
             _ => (),
         }
