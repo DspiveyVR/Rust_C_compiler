@@ -34,21 +34,25 @@ enum KeywordType {
 }
 
 //Parsing enums
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Program {
     FunctionDeclaration(String),
     Statement(StatementType),
     Expression(ExpressionType),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum StatementType {
     Return,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum ExpressionType {
     Constant(u64),
+    Negation,
+    BitwiseComplement,
+    LogicalNegation,
+    Semicolon,
 }
 
 impl Program {
@@ -58,7 +62,6 @@ impl Program {
         if let Token::Identifier(identifier) = &tokens[1] {
             function_identifier = identifier.to_string();
         }
-        //let function_identifier_copy = function_identifier.clone();
 
         let left: Vec<Token> = vec![
             Token::Keyword(KeywordType::Int),
@@ -94,6 +97,7 @@ impl Program {
         (tokens, ast)
     }
 
+    //FIXME: You may want to use Result enums to catch errors.  Then create a function to list all errors and then panic
     fn parse_statement(tokens: Vec<Token>, mut ast: Vec<Program>) -> Vec<Program> {
         let mut last_token = &Token::Empty;
         for token in tokens.iter() {
@@ -106,10 +110,10 @@ impl Program {
                 }
                 Token::IntegerLiteral(_) => {
                     match last_token {
-                        Token::Keyword(KeywordType::Return) |
-                        Token::Negation |
-                        Token::BitwiseComplement |
-                        Token::LogicalNegation
+                        Token::Keyword(KeywordType::Return)
+                        | Token::Negation
+                        | Token::BitwiseComplement
+                        | Token::LogicalNegation
                         => last_token = token,
                         _ => panic!("Improper order of integer literal"),
                     }
@@ -120,16 +124,16 @@ impl Program {
                         _ => panic!("Semicolon must come last in a statement"),
                     }
                 }
-                Token::Negation |
-                Token::BitwiseComplement |
-                Token::LogicalNegation
+                Token::Negation
+                | Token::BitwiseComplement
+                | Token::LogicalNegation
                 => {
                     match last_token {
                         //FIXME: could pose a problem if return keyword is entered between operators
-                        Token::Keyword(KeywordType::Return) |
-                        Token::Negation |
-                        Token::BitwiseComplement |
-                        Token::LogicalNegation
+                        Token::Keyword(KeywordType::Return)
+                        | Token::Negation
+                        | Token::BitwiseComplement
+                        | Token::LogicalNegation
                         => last_token = token,
                         _ => panic!("Improper order of operator"),
                     }
@@ -142,12 +146,16 @@ impl Program {
             panic!("you forgot a semicolon LOLLLLLLLLLLL");
         }
 
-        //FIXME: Not expandable.  Need conditions to determine what is pushed to the AST
-        //FIXME: yep yep you gotta support the uh the uh new stuff ohmygod please for the love of God
-        //FIXME: GO TO FREAKING SLEEP
-        if let Token::IntegerLiteral(integer_literal) = tokens[1] {
-            ast.push(Program::Statement(StatementType::Return));
-            ast.push(Program::Expression(ExpressionType::Constant(integer_literal)));
+        for token in tokens.iter() {
+            match token {
+                Token::Keyword(KeywordType::Return) => ast.push(Program::Statement(StatementType::Return)),
+                Token::IntegerLiteral(integer_literal) => ast.push(Program::Expression(ExpressionType::Constant(*integer_literal))),
+                Token::Negation => ast.push(Program::Expression(ExpressionType::Negation)),
+                Token::BitwiseComplement => ast.push(Program::Expression(ExpressionType::BitwiseComplement)),
+                Token::LogicalNegation => ast.push(Program::Expression(ExpressionType::LogicalNegation)),
+                Token::Semicolon => ast.push(Program::Expression(ExpressionType::Semicolon)),
+                _ => (),
+            }
         }
 
         ast
@@ -183,50 +191,14 @@ fn lex(infile: &String) -> Vec<Token> {
         let mut letter = String::new();
         for char in word.chars() {
             match char {
-                //FIXME: change these to or (|) conditions so as not to repeat the same code each time.
-                '(' => {
-                    letters.push(letter.to_owned());
-                    letters.push(char.to_string());
-                    letter = String::new();
-                    continue;
-                }
-                ')' => {
-                    letters.push(letter.to_owned());
-                    letters.push(char.to_string());
-                    letter = String::new();
-                    continue;
-                }
-                '{' => {
-                    letters.push(letter.to_owned());
-                    letters.push(char.to_string());
-                    letter = String::new();
-                    continue;
-                }
-                '}' => {
-                    letters.push(letter.to_owned());
-                    letters.push(char.to_string());
-                    letter = String::new();
-                    continue;
-                }
-                ';' => {
-                    letters.push(letter.to_owned());
-                    letters.push(char.to_string());
-                    letter = String::new();
-                    continue;
-                }
-                '-' => {
-                    letters.push(letter.to_owned());
-                    letters.push(char.to_string());
-                    letter = String::new();
-                    continue;
-                }
-                '~' => {
-                    letters.push(letter.to_owned());
-                    letters.push(char.to_string());
-                    letter = String::new();
-                    continue;
-                }
-                '!' => {
+                '('
+                | ')'
+                | '{'
+                | '}'
+                | ';'
+                | '-'
+                | '~'
+                | '!' => {
                     letters.push(letter.to_owned());
                     letters.push(char.to_string());
                     letter = String::new();
@@ -301,34 +273,33 @@ fn parse(lexer: Vec<Token>) -> Vec<Program> {
     ast
 }
 
-//assembly for return_2.c
-/*
-    .globl	main
-main:
-    movl	$2, %eax
-    ret
-*/
-
 fn generate_assembly(ast: Vec<Program>) {
     let mut file_string = String::new();
+    let mut ast_index = usize::MIN;
 
     for (i, node) in ast.iter().enumerate() {
         match node {
             Program::FunctionDeclaration(_) => {
-                file_string.push_str("
-                    .globl main
-                main:
-                ")
+                file_string.push_str("\t.globl main \nmain:");
             }
-            Program::Statement(StatementType::Return) => {
-                match ast[i + 1] {
-                    Program::Expression(ExpressionType::Constant(num)) => {
-                        write!(file_string, "
-                    movl    ${}, %eax
-                    ret
-                    ", num).unwrap();
+            Program::Statement(_) => {
+                let mut statement: Vec<&Program> = Vec::new();
+                ast_index = i;
+                while ast[ast_index] != Program::Expression(ExpressionType::Semicolon) {
+                    statement.push(&ast[ast_index]);
+                    ast_index += 1;
+                }
+                statement.reverse();
+                for i in statement {
+                    match i {
+                        Program::Expression(ExpressionType::Constant(num)) => {
+                            write!(file_string, "\n\tmovl    ${}, %eax", num).unwrap();
+                        }
+                        Program::Expression(ExpressionType::Negation) => file_string.push_str("\n\tneg    %eax"),
+                        Program::Expression(ExpressionType::BitwiseComplement) => file_string.push_str("\n\tnot    %eax"),
+                        Program::Statement(StatementType::Return) => file_string.push_str("\n\tret\n"),
+                        _ => (),
                     }
-                    _ => (),
                 }
             }
             _ => (),
