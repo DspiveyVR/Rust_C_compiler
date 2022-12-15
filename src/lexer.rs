@@ -1,4 +1,3 @@
-
 pub mod lexer {
     #[derive(Debug, PartialEq)]
     pub enum Token {
@@ -13,6 +12,12 @@ pub mod lexer {
         Negation,
         BitwiseComplement,
         LogicalNegation,
+        //Todo
+        Addition,
+        //Todo
+        Multiplication,
+        //Todo
+        Division,
         Invalid(String),
         Empty,
     }
@@ -59,7 +64,9 @@ pub mod lexer {
                     | ';'
                     | '-'
                     | '~'
-                    | '!' => {
+                    | '!'
+                    | '+'
+                    => {
                         letters.push(letter.to_owned());
                         letters.push(char.to_string());
                         letter = String::new();
@@ -104,6 +111,7 @@ pub mod lexer {
                     "-" => tokens.push(Token::Negation),
                     "~" => tokens.push(Token::BitwiseComplement),
                     "!" => tokens.push(Token::LogicalNegation),
+                    "+" => tokens.push(Token::Addition),
                     _ => tokens.push(Token::Invalid(letter.to_owned())),
                 }
             }

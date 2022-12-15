@@ -1,4 +1,3 @@
-
 pub mod parser {
     pub use crate::lexer::lexer::{Token, KeywordType};
 
@@ -7,6 +6,7 @@ pub mod parser {
         FunctionDeclaration(String),
         Statement(StatementType),
         Expression(ExpressionType),
+        Empty,
     }
 
     #[derive(Debug, PartialEq)]
@@ -15,11 +15,20 @@ pub mod parser {
     }
 
     #[derive(Debug, PartialEq)]
+    //TODO: Perhaps add separate enums to create a distinction between "prime" expressions and ones with "parameters"
     pub enum ExpressionType {
-        Constant(u64),
+        //FIXME: Oh dooky cheeks they all gotta be recursive
+        Constant(u64, Box<Option<Program>>),
         Negation,
         BitwiseComplement,
         LogicalNegation,
+        //Todo
+        Addition(Box<Program>, Box<Program>),
+        //Todo
+        Multiplication,
+        //Todo
+        Division,
+        //FIXME: Semicolon variant is nonsense.  NOT an expression.  Remove any implementation of this
         Semicolon,
     }
 
@@ -43,7 +52,6 @@ pub mod parser {
     }
 
     impl Program {
-        //This may not be the best way to do this
         fn parse_function_declaration(mut tokens: Vec<Token>, mut ast: Vec<Program>) -> (Vec<Token>, Vec<Program>) {
             let mut function_identifier = String::new();
             if let Token::Identifier(identifier) = &tokens[1] {
@@ -100,6 +108,7 @@ pub mod parser {
                             | Token::Negation
                             | Token::BitwiseComplement
                             | Token::LogicalNegation
+                            | Token::Addition
                             => last_token = token,
                             _ => panic!("Improper order of integer literal"),
                         }
@@ -123,6 +132,12 @@ pub mod parser {
                             _ => panic!("Improper order of operator"),
                         }
                     }
+                    Token::Addition => {
+                        match last_token {
+                            Token::IntegerLiteral(_) => last_token = token,
+                            _ => panic!("you can't add that stoopit")
+                        }
+                    }
                     _ => panic!("Invalid token"),
                 }
             }
@@ -131,19 +146,95 @@ pub mod parser {
                 panic!("you forgot a semicolon LOLLLLLLLLLLL");
             }
 
-            for token in tokens.iter() {
+
+
+            for (i, token) in tokens.iter().enumerate() {
+                let mut token_index:usize;
                 match token {
-                    Token::Keyword(KeywordType::Return) => ast.push(Program::Statement(StatementType::Return)),
-                    Token::IntegerLiteral(integer_literal) => ast.push(Program::Expression(ExpressionType::Constant(*integer_literal))),
-                    Token::Negation => ast.push(Program::Expression(ExpressionType::Negation)),
-                    Token::BitwiseComplement => ast.push(Program::Expression(ExpressionType::BitwiseComplement)),
-                    Token::LogicalNegation => ast.push(Program::Expression(ExpressionType::LogicalNegation)),
-                    Token::Semicolon => ast.push(Program::Expression(ExpressionType::Semicolon)),
+                    Token::Keyword(KeywordType::Return) => {
+                        let mut statement: Vec<&Token> = Vec::new();
+                        //let mut ast_borrow: Vec<&Program> = Vec::new();
+                        token_index = i + 1;
+                        while tokens[token_index] != Token::Semicolon {
+                            statement.push(&tokens[token_index]);
+                            token_index += 1;
+                        }
+                        // for node in ast.iter() {
+                        //     ast_borrow.push(node);
+                        // }
+                        let ast_exp = Self::parse_expression(statement);
+                        for node in ast_exp {
+                            ast.push(node);
+                        }
+                        ast.push(Program::Statement(StatementType::Return));
+                    }
                     _ => (),
                 }
             }
 
             ast
+        }
+
+        fn parse_expression(tokens: Vec<&Token>) -> Vec<Program> {
+            let mut ast_exp: Vec<Program> = Vec::new();
+            //Add expressions to list by order of operations, run through lists linearly to determine parameters to expressions
+            let mut primary_expressions: Vec<&Token> = Vec::new();
+            let mut secondary_expressions: Vec<&Token> = Vec::new();
+
+            for token in tokens {
+                match token {
+                    //Secondary expressions
+                    Token::Addition => secondary_expressions.push(token),
+                    //Primary expressions
+                    Token::IntegerLiteral(_) => primary_expressions.push(token),
+                    _ => (),
+                }
+            }
+
+            println!("\n<primary expressions>");
+            for expression in primary_expressions.iter() {
+                println!("{:?}", expression);
+            }
+
+            println!("\n<secondary expressions>");
+            for expression in secondary_expressions.iter() {
+                println!("{:?}", expression);
+            }
+
+            for expression in secondary_expressions {
+                match expression {
+                    Token::Addition => {
+                        let op1;
+                        let op2;
+                        let mut expressions = primary_expressions.iter();
+                        match expressions.next() {
+                            Some(Token::IntegerLiteral(num)) => {
+                                op1 = Program::Expression(ExpressionType::Constant(*num, Box::new(None)));
+                            }
+                            _ => op1 = Program::Empty,
+                        }
+                        match expressions.next() {
+                            Some(Token::IntegerLiteral(num)) => {
+                                op2 = Program::Expression(ExpressionType::Constant(*num, Box::new(None)));
+                            }
+                            _ => op2 = Program::Empty,
+                        }
+                        primary_expressions.remove(0);
+                        primary_expressions.remove(0);
+                        ast_exp.push(Program::Expression(ExpressionType::Addition(Box::new(op1), Box::new(op2))));
+                    }
+                    _ => (),
+                }
+            }
+
+            for expression in primary_expressions {
+                match expression {
+                    Token::IntegerLiteral(num) => ast_exp.push(Program::Expression(ExpressionType::Constant(*num, Box::new(None)))),
+                    _ => (),
+                }
+            }
+
+            ast_exp
         }
     }
 }
