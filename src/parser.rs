@@ -6,6 +6,8 @@ pub mod parser {
         FunctionDeclaration(String),
         Statement(StatementType),
         Expression(ExpressionType),
+        //FIXME: maybe stupid
+        //FIXME: later i might need to replace the Empty variants (Token also has one) with optionals
         Empty,
     }
 
@@ -15,15 +17,14 @@ pub mod parser {
     }
 
     #[derive(Debug, PartialEq)]
-    //TODO: Perhaps add separate enums to create a distinction between "prime" expressions and ones with "parameters"
     pub enum ExpressionType {
-        //FIXME: Oh dooky cheeks they all gotta be recursive
-        Constant(u64, Box<Option<Program>>),
-        Negation,
-        BitwiseComplement,
-        LogicalNegation,
+        Constant(u64),
+        Negation(Box<ExpNegation>),
         //Todo
-        Addition(Box<Program>, Box<Program>),
+        BitwiseComplement,
+        //Todo
+        LogicalNegation,
+        Addition(Box<ExpAdd>),
         //Todo
         Multiplication,
         //Todo
@@ -31,6 +32,18 @@ pub mod parser {
         //FIXME: Semicolon variant is nonsense.  NOT an expression.  Remove any implementation of this
         Semicolon,
     }
+
+    #[derive(Debug, PartialEq)]
+    pub struct ExpNegation {
+        complement: Option<Program>,
+    }
+
+    #[derive(Debug, PartialEq)]
+    pub struct ExpAdd {
+        op1: Program,
+        op2: Program,
+    }
+
 
     pub fn parse(lexer: Vec<Token>) -> Vec<Program> {
         let ast: Vec<Program> = Vec::new();
@@ -128,6 +141,7 @@ pub mod parser {
                             | Token::Negation
                             | Token::BitwiseComplement
                             | Token::LogicalNegation
+                            | Token::Addition
                             => last_token = token,
                             _ => panic!("Improper order of operator"),
                         }
@@ -147,21 +161,23 @@ pub mod parser {
             }
 
 
-
             for (i, token) in tokens.iter().enumerate() {
-                let mut token_index:usize;
+                let mut token_index: usize;
                 match token {
                     Token::Keyword(KeywordType::Return) => {
                         let mut statement: Vec<&Token> = Vec::new();
-                        //let mut ast_borrow: Vec<&Program> = Vec::new();
+
                         token_index = i + 1;
                         while tokens[token_index] != Token::Semicolon {
                             statement.push(&tokens[token_index]);
                             token_index += 1;
                         }
-                        // for node in ast.iter() {
-                        //     ast_borrow.push(node);
-                        // }
+
+                        println!("\n<statement tokens>");
+                        for token in statement.iter() {
+                            println!("{:?}", token);
+                        }
+
                         let ast_exp = Self::parse_expression(statement);
                         for node in ast_exp {
                             ast.push(node);
@@ -175,66 +191,61 @@ pub mod parser {
             ast
         }
 
-        fn parse_expression(tokens: Vec<&Token>) -> Vec<Program> {
+        fn parse_expression(mut tokens: Vec<&Token>) -> Vec<Program> {
             let mut ast_exp: Vec<Program> = Vec::new();
-            //Add expressions to list by order of operations, run through lists linearly to determine parameters to expressions
-            let mut primary_expressions: Vec<&Token> = Vec::new();
-            let mut secondary_expressions: Vec<&Token> = Vec::new();
 
-            for token in tokens {
-                match token {
-                    //Secondary expressions
-                    Token::Addition => secondary_expressions.push(token),
-                    //Primary expressions
-                    Token::IntegerLiteral(_) => primary_expressions.push(token),
-                    _ => (),
-                }
-            }
-
-            println!("\n<primary expressions>");
-            for expression in primary_expressions.iter() {
-                println!("{:?}", expression);
-            }
-
-            println!("\n<secondary expressions>");
-            for expression in secondary_expressions.iter() {
-                println!("{:?}", expression);
-            }
-
-            for expression in secondary_expressions {
-                match expression {
-                    Token::Addition => {
-                        let op1;
-                        let op2;
-                        let mut expressions = primary_expressions.iter();
-                        match expressions.next() {
-                            Some(Token::IntegerLiteral(num)) => {
-                                op1 = Program::Expression(ExpressionType::Constant(*num, Box::new(None)));
-                            }
-                            _ => op1 = Program::Empty,
-                        }
-                        match expressions.next() {
-                            Some(Token::IntegerLiteral(num)) => {
-                                op2 = Program::Expression(ExpressionType::Constant(*num, Box::new(None)));
-                            }
-                            _ => op2 = Program::Empty,
-                        }
-                        primary_expressions.remove(0);
-                        primary_expressions.remove(0);
-                        ast_exp.push(Program::Expression(ExpressionType::Addition(Box::new(op1), Box::new(op2))));
-                    }
-                    _ => (),
-                }
-            }
-
-            for expression in primary_expressions {
-                match expression {
-                    Token::IntegerLiteral(num) => ast_exp.push(Program::Expression(ExpressionType::Constant(*num, Box::new(None)))),
-                    _ => (),
-                }
-            }
+            let token_index = 0;
+            let called_recursively = false;
+            ast_exp.push(Self::parse_expression_recursive(&mut tokens, token_index, called_recursively));
 
             ast_exp
+        }
+
+        fn parse_expression_recursive(mut tokens: &mut Vec<&Token>, token_index: usize, mut called_recursively: bool) -> Program {
+            let mut term = Program::Empty;
+
+            //Terms that come from recursive calls should return early.
+            //Otherwise they should cascade into the next match statement.
+            match tokens.get(token_index) {
+                Some(&Token::IntegerLiteral(num)) => {
+                    tokens.remove(token_index);
+                    term = Program::Expression(ExpressionType::Constant(*num));
+                    if called_recursively {
+                        return term;
+                    }
+                }
+                Some(&Token::Negation) => {
+                    tokens.remove(token_index);
+                    let last_called_recursively = called_recursively;
+                    called_recursively = true;
+                    let exp = Self::parse_expression_recursive(tokens, token_index, called_recursively);
+                    term = Program::Expression(ExpressionType::Negation(Box::new(ExpNegation {
+                        complement: Some(exp)
+                    })));
+                    if last_called_recursively {
+                        return term;
+                    }
+                }
+                _ => {
+                    Self::parse_expression_recursive(tokens, token_index + 1, called_recursively);
+                }
+            }
+
+
+            match tokens.get(token_index) {
+                Some(&Token::Addition) => {
+                    tokens.remove(token_index);
+                    called_recursively = false;
+                    let exp = Self::parse_expression_recursive(tokens, token_index, called_recursively);
+                    term = Program::Expression(ExpressionType::Addition(Box::new(ExpAdd {
+                        op1: term,
+                        op2: exp,
+                    })))
+                }
+                _ => (),
+            }
+
+            term
         }
     }
 }
